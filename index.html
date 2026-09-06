@@ -30,7 +30,7 @@
     </div>
 
     <script>
-        // Masukkan URL Web App Google Apps Script kamu di sini
+        // Masukkan URL Web App Google Apps Script kamu di sini (berakhiran /exec)
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec";
 
         let html5QrCode;
@@ -46,46 +46,41 @@
                 `;
 
                 // Kirim ID Tiket ke Google Apps Script
-fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText))
-    .then(res => res.json())
-    .then(data => {
-        const alertBox = document.getElementById('result-alert');
-        
-        if (data.status === 'success') {
-            alertBox.innerHTML = `
-                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
-                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
-                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                    <p class="text-xs text-emerald-300 mt-2">${data.message}</p>
-                </div>
-            `;
-        } else if (data.status === 'already_checked') {
-            alertBox.innerHTML = `
-                <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
-                    <p class="font-bold text-lg text-amber-400">⚠️ TIKET SUDAH DIGUNAKAN!</p>
-                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                    <p class="text-xs text-amber-300 mt-2">${data.message}</p>
-                </div>
-            `;
-        } else {
-            alertBox.innerHTML = `
-                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
-                    <p class="font-bold text-lg text-rose-400">❌ GAGAL / TIDAK VALID</p>
-                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                    <p class="text-xs text-rose-300 mt-2">${data.message || 'Tiket tidak dikenali.'}</p>
-                </div>
-            `;
-        }
-        
-        // Nyalakan kembali scanner setelah 4 detik
-        setTimeout(() => {
-            alertBox.innerHTML = "";
-            startScanner();
-        }, 4000);
-    })
-    .catch(err => {
-        // ... (penanganan error jaringan)
-    });
+                fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText))
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alertBox.innerHTML = `
+                                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
+                                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-xs text-emerald-300 mt-2">${data.message}</p>
+                                </div>
+                            `;
+                        } else if (data.status === 'already_checked') {
+                            alertBox.innerHTML = `
+                                <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
+                                    <p class="font-bold text-lg text-amber-400">⚠️ TIKET SUDAH DIGUNAKAN!</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-xs text-amber-300 mt-2">${data.message}</p>
+                                </div>
+                            `;
+                        } else {
+                            alertBox.innerHTML = `
+                                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
+                                    <p class="font-bold text-lg text-rose-400">❌ GAGAL / TIDAK VALID</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-xs text-rose-300 mt-2">${data.message || 'Tiket tidak dikenali.'}</p>
+                                </div>
+                            `;
+                        }
+                        
+                        // Nyalakan kembali scanner setelah 4 detik untuk tamu berikutnya
+                        setTimeout(() => {
+                            alertBox.innerHTML = "";
+                            startScanner();
+                        }, 4000);
+                    })
                     .catch(err => {
                         alertBox.innerHTML = `
                             <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold">
@@ -106,18 +101,26 @@ fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText
             html5QrCode = new Html5Qrcode("reader");
             const config = { fps: 10, qrbox: { width: 250, height: 250 } };
             
-            // Langsung paksa menggunakan kamera belakang (environment)
+            // Coba buka kamera belakang secara langsung
             html5QrCode.start(
                 { facingMode: "environment" }, 
                 config, 
                 onScanSuccess
             ).catch(err => {
-                console.error("Gagal mengakses kamera:", err);
-                document.getElementById('result-alert').innerHTML = `
-                    <div class="bg-rose-950 border border-rose-500 text-rose-200 p-3 rounded-lg text-center text-xs">
-                        ⚠️ Tidak dapat mengakses kamera belakang. Pastikan izin kamera di browser sudah diaktifkan (Allow).
-                    </div>
-                `;
+                console.warn("Kamera belakang utama gagal, mencoba kamera default...", err);
+                // Fallback otomatis ke kamera apa saja jika kamera belakang terkunci/tidak ada
+                html5QrCode.start(
+                    { facingMode: "user" }, 
+                    config, 
+                    onScanSuccess
+                ).catch(fallbackErr => {
+                    console.error("Gagal total mengakses kamera:", fallbackErr);
+                    document.getElementById('result-alert').innerHTML = `
+                        <div class="bg-rose-950 border border-rose-500 text-rose-200 p-3 rounded-lg text-center text-xs">
+                            ⚠️ Tidak dapat mengakses kamera. Pastikan izin kamera pada browser sudah diaktifkan (Allow) dan gunakan HTTPS.
+                        </div>
+                    `;
+                });
             });
         }
 
