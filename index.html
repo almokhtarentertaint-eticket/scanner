@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Panitia - Al Mokhtar Ensemble</title>
+    <!-- Tailwind CSS untuk styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Pustaka QR Scanner -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body { background-color: #0d0d11; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+        .font-cinzel { font-family: 'Cinzel', serif; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-md bg-[#16161e] border border-amber-500/30 rounded-xl p-6 shadow-2xl">
+        <div class="text-center border-b border-amber-500/30 pb-4 mb-6">
+            <h1 class="text-amber-400 font-cinzel text-xl tracking-wider">GATE CHECK-IN</h1>
+            <p class="text-slate-400 text-xs uppercase mt-1">Al Mokhtar Ensemble - 2 Okt 2026</p>
+        </div>
+
+        <!-- Area Kamera Scanner -->
+        <div id="reader" class="w-full rounded-lg overflow-hidden border border-slate-700 bg-black"></div>
+
+        <!-- Status / Notifikasi Hasil Scan -->
+        <div id="result-alert" class="mt-6"></div>
+    </div>
+
+    <script>
+        // Masukkan URL Web App Google Apps Script kamu di sini
+        const GOOGLE_SCRIPT_URL = "MASUKKAN_URL_WEB_APP_APPS_SCRIPT_DISINI";
+
+        let html5QrCode;
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // Hentikan sementara scanner agar tidak scan double secara instan
+            html5QrCode.stop().then(() => {
+                const alertBox = document.getElementById('result-alert');
+                alertBox.innerHTML = `
+                    <div class="bg-blue-950 border border-blue-500 text-blue-200 p-4 rounded-lg text-center font-semibold">
+                        Memverifikasi ID: <span class="text-white">${decodedText}</span>...
+                    </div>
+                `;
+
+                // Kirim ID Tiket ke Google Apps Script
+                fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText))
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alertBox.innerHTML = `
+                                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
+                                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-xs text-emerald-300 mt-2">${data.message}</p>
+                                </div>
+                            `;
+                        } else {
+                            alertBox.innerHTML = `
+                                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
+                                    <p class="font-bold text-lg text-rose-400">❌ GAGAL / VALIDASI DITOLAK</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-xs text-rose-300 mt-2">${data.message}</p>
+                                </div>
+                            `;
+                        }
+                        
+                        // Nyalakan kembali scanner setelah 4 detik untuk tamu berikutnya
+                        setTimeout(() => {
+                            alertBox.innerHTML = "";
+                            startScanner();
+                        }, 4000);
+                    })
+                    .catch(err => {
+                        alertBox.innerHTML = `
+                            <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold">
+                                ⚠️ Gagal terhubung ke server. Periksa koneksi internet.
+                            </div>
+                        `;
+                        setTimeout(() => {
+                            alertBox.innerHTML = "";
+                            startScanner();
+                        }, 3000);
+                    });
+            }).catch(err => {
+                console.error("Gagal menghentikan scanner", err);
+            });
+        }
+
+        function startScanner() {
+            html5QrCode = new Html5Qrcode("reader");
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            
+            // Langsung paksa menggunakan kamera belakang (environment)
+            html5QrCode.start(
+                { facingMode: "environment" }, 
+                config, 
+                onScanSuccess
+            ).catch(err => {
+                console.error("Gagal mengakses kamera:", err);
+                document.getElementById('result-alert').innerHTML = `
+                    <div class="bg-rose-950 border border-rose-500 text-rose-200 p-3 rounded-lg text-center text-xs">
+                        ⚠️ Tidak dapat mengakses kamera belakang. Pastikan izin kamera di browser sudah diaktifkan (Allow).
+                    </div>
+                `;
+            });
+        }
+
+        // Jalankan scanner saat halaman dimuat
+        document.addEventListener("DOMContentLoaded", () => {
+            startScanner();
+        });
+    </script>
+</body>
+</html>
