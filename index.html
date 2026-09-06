@@ -46,33 +46,46 @@
                 `;
 
                 // Kirim ID Tiket ke Google Apps Script
-                fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText))
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.status === 'success') {
-                            alertBox.innerHTML = `
-                                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
-                                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                                    <p class="text-xs text-emerald-300 mt-2">${data.message}</p>
-                                </div>
-                            `;
-                        } else {
-                            alertBox.innerHTML = `
-                                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
-                                    <p class="font-bold text-lg text-rose-400">❌ GAGAL / VALIDASI DITOLAK</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                                    <p class="text-xs text-rose-300 mt-2">${data.message}</p>
-                                </div>
-                            `;
-                        }
-                        
-                        // Nyalakan kembali scanner setelah 4 detik untuk tamu berikutnya
-                        setTimeout(() => {
-                            alertBox.innerHTML = "";
-                            startScanner();
-                        }, 4000);
-                    })
+fetch(GOOGLE_SCRIPT_URL + "?action=checkin&id=" + encodeURIComponent(decodedText))
+    .then(res => res.json())
+    .then(data => {
+        const alertBox = document.getElementById('result-alert');
+        
+        if (data.status === 'success') {
+            alertBox.innerHTML = `
+                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
+                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
+                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                    <p class="text-xs text-emerald-300 mt-2">${data.message}</p>
+                </div>
+            `;
+        } else if (data.status === 'already_checked') {
+            alertBox.innerHTML = `
+                <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
+                    <p class="font-bold text-lg text-amber-400">⚠️ TIKET SUDAH DIGUNAKAN!</p>
+                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                    <p class="text-xs text-amber-300 mt-2">${data.message}</p>
+                </div>
+            `;
+        } else {
+            alertBox.innerHTML = `
+                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
+                    <p class="font-bold text-lg text-rose-400">❌ GAGAL / TIDAK VALID</p>
+                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                    <p class="text-xs text-rose-300 mt-2">${data.message || 'Tiket tidak dikenali.'}</p>
+                </div>
+            `;
+        }
+        
+        // Nyalakan kembali scanner setelah 4 detik
+        setTimeout(() => {
+            alertBox.innerHTML = "";
+            startScanner();
+        }, 4000);
+    })
+    .catch(err => {
+        // ... (penanganan error jaringan)
+    });
                     .catch(err => {
                         alertBox.innerHTML = `
                             <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold">
