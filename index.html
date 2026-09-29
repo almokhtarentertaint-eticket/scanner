@@ -30,30 +30,68 @@
     </div>
 
     <script>
-        // URL Web App Google Apps Script kamu
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec";
+        // DAFTAR URL BACKEND GOOGLE APPS SCRIPT
+        const BACKEND_URLS = [
+            "https://script.google.com/macros/s/AKfycbyV2VwcJnAMXvpnW9tJQClegnEoUeLJptMVzwrBNHL_tDVByrFFvbPkr9G7HRht1t4/exec", // Backend Utama (Presale & OTS)
+            "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec"  // Backend Cadangan / Alternatif jika ada
+        ];
 
         let html5QrCode;
 
+        // Fungsi Parser untuk mengambil Kode Tiket murni jika QR berisi URL
+        function parseTicketCode(scannedText) {
+            scannedText = scannedText.trim();
+            // Jika hasil scan berupa URL (misal: https://...?ticket=AME-123456-1 atau code=AME-123456-1)
+            if (scannedText.includes("code=")) {
+                return scannedText.split("code=")[1].split("&")[0];
+            }
+            if (scannedText.includes("ticket=")) {
+                return scannedText.split("ticket=")[1].split("&")[0];
+            }
+            return scannedText;
+        }
+
+        // Fungsi rekursif untuk mencoba fetch ke beberapa backend secara berurutan
+        async function fetchWithFallback(ticketId, urlIndex = 0) {
+            if (urlIndex >= BACKEND_URLS.length) {
+                throw new Error("Semua backend gagal dihubungi.");
+            }
+
+            const currentUrl = BACKEND_URLS[urlIndex] + "?action=checkin&code=" + encodeURIComponent(ticketId);
+            
+            try {
+                const response = await fetch(currentUrl);
+                const data = await response.json();
+                return data;
+            } catch (err) {
+                console.warn(`Gagal terhubung ke backend index ${urlIndex}, mencoba backend berikutnya...`, err);
+                if (urlIndex + 1 < BACKEND_URLS.length) {
+                    return fetchWithFallback(ticketId, urlIndex + 1);
+                }
+                throw err;
+            }
+        }
+
         function onScanSuccess(decodedText, decodedResult) {
+            const cleanTicketCode = parseTicketCode(decodedText);
+
             // Hentikan sementara scanner agar tidak scan double secara instan
             html5QrCode.stop().then(() => {
                 const alertBox = document.getElementById('result-alert');
                 alertBox.innerHTML = `
                     <div class="bg-blue-950 border border-blue-500 text-blue-200 p-4 rounded-lg text-center font-semibold">
-                        Memverifikasi ID: <span class="text-white">${decodedText}</span>...
+                        Memverifikasi ID: <span class="text-white">${cleanTicketCode}</span>...
                     </div>
                 `;
 
-                // Kirim ID Tiket ke Google Apps Script (Menggunakan parameter 'code')
-                fetch(GOOGLE_SCRIPT_URL + "?action=checkin&code=" + encodeURIComponent(decodedText.trim()))
-                    .then(res => res.json())
+                // Kirim ID Tiket menggunakan sistem Multi-Backend Fallback
+                fetchWithFallback(cleanTicketCode)
                     .then(data => {
                         if (data.status === 'success') {
                             alertBox.innerHTML = `
                                 <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
                                     <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
                                     <p class="text-xs text-emerald-300 mt-2">Pemegang: <strong>${data.holder || '-'}</strong></p>
                                 </div>
                             `;
@@ -61,30 +99,30 @@
                             alertBox.innerHTML = `
                                 <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
                                     <p class="font-bold text-lg text-amber-400">⚠️ TIKET SUDAH DIGUNAKAN!</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
-                                    <p class="text-xs text-amber-300 mt-2">${data.message}</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
+                                    <p class="text-xs text-amber-300 mt-2">${data.message || 'Tiket ini sudah di-scan sebelumnya.'}</p>
                                 </div>
                             `;
                         } else {
                             alertBox.innerHTML = `
                                 <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
                                     <p class="font-bold text-lg text-rose-400">❌ TIKET TIDAK VALID</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${decodedText}</p>
+                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
                                     <p class="text-xs text-rose-300 mt-2">${data.message || 'Tiket tidak ditemukan di sistem.'}</p>
                                 </div>
                             `;
                         }
                         
-                        // Nyalakan kembali scanner setelah 4 detik
+                        // Nyalakan kembali scanner setelah 3 detik
                         setTimeout(() => {
                             alertBox.innerHTML = "";
                             startScanner();
-                        }, 4000);
+                        }, 3000);
                     })
                     .catch(err => {
                         alertBox.innerHTML = `
                             <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold">
-                                ⚠️ Gagal terhubung ke server. Periksa koneksi internet.
+                                ⚠️ Gagal terhubung ke server backend. Periksa koneksi internet.
                             </div>
                         `;
                         setTimeout(() => {
