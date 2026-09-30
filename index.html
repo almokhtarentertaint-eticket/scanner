@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scanner Panitia - Al Mokhtar Ensemble</title>
-    <!-- Tailwind CSS untuk styling -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Pustaka QR Scanner -->
     <script src="https://unpkg.com/html5-qrcode"></script>
@@ -32,8 +32,8 @@
     <script>
         // DAFTAR URL BACKEND GOOGLE APPS SCRIPT
         const BACKEND_URLS = [
-            "https://script.google.com/macros/s/AKfycbyV2VwcJnAMXvpnW9tJQClegnEoUeLJptMVzwrBNHL_tDVByrFFvbPkr9G7HRht1t4/exec", // Backend Utama (Presale & OTS)
-            "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec"  // Backend Cadangan / Alternatif jika ada
+            "https://script.google.com/macros/s/AKfycbyV2VwcJnAMXvpnW9tJQClegnEoUeLJptMVzwrBNHL_tDVByrFFvbPkr9G7HRht1t4/exec", // Backend 1 (Presale)
+            "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec"  // Backend 2 (OTS)
         ];
 
         let html5QrCode;
@@ -41,7 +41,6 @@
         // Fungsi Parser untuk mengambil Kode Tiket murni jika QR berisi URL
         function parseTicketCode(scannedText) {
             scannedText = scannedText.trim();
-            // Jika hasil scan berupa URL (misal: https://...?ticket=AME-123456-1 atau code=AME-123456-1)
             if (scannedText.includes("code=")) {
                 return scannedText.split("code=")[1].split("&")[0];
             }
@@ -51,31 +50,38 @@
             return scannedText;
         }
 
-        // Fungsi rekursif untuk mencoba fetch ke beberapa backend secara berurutan
-        async function fetchWithFallback(ticketId, urlIndex = 0) {
-            if (urlIndex >= BACKEND_URLS.length) {
-                throw new Error("Semua backend gagal dihubungi.");
+        // Fungsi pengecekan beruntun (Multi-Backend Fallback)
+        async function checkTicketMultiBackend(ticketId) {
+            let lastResult = null;
+
+            for (let i = 0; i < BACKEND_URLS.length; i++) {
+                const url = BACKEND_URLS[i] + "?action=checkin&code=" + encodeURIComponent(ticketId);
+                try {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    // Simpan hasil respon terakhir
+                    lastResult = data;
+
+                    // Jika tiket DITEMUKAN (berhasil check-in atau sudah dipakai), langsung return hasil
+                    if (data.status === "success" || data.status === "already_used" || data.status === "already_checked") {
+                        return data;
+                    }
+                    
+                    // Jika data.status === "invalid", loop lanjut ke backend berikutnya
+                } catch (err) {
+                    console.warn(`Gagal terhubung ke backend index ${i}:`, err);
+                }
             }
 
-            const currentUrl = BACKEND_URLS[urlIndex] + "?action=checkin&code=" + encodeURIComponent(ticketId);
-            
-            try {
-                const response = await fetch(currentUrl);
-                const data = await response.json();
-                return data;
-            } catch (err) {
-                console.warn(`Gagal terhubung ke backend index ${urlIndex}, mencoba backend berikutnya...`, err);
-                if (urlIndex + 1 < BACKEND_URLS.length) {
-                    return fetchWithFallback(ticketId, urlIndex + 1);
-                }
-                throw err;
-            }
+            // Jika di semua backend tidak ditemukan / status invalid, kembalikan respon terakhir
+            return lastResult || { status: "error", message: "Gagal terhubung ke semua server backend." };
         }
 
         function onScanSuccess(decodedText, decodedResult) {
             const cleanTicketCode = parseTicketCode(decodedText);
 
-            // Hentikan sementara scanner agar tidak scan double secara instan
+            // Hentikan sementara scanner agar tidak scan berulang
             html5QrCode.stop().then(() => {
                 const alertBox = document.getElementById('result-alert');
                 alertBox.innerHTML = `
@@ -84,8 +90,8 @@
                     </div>
                 `;
 
-                // Kirim ID Tiket menggunakan sistem Multi-Backend Fallback
-                fetchWithFallback(cleanTicketCode)
+                // Kirim ID Tiket menggunakan logika Multi-Backend Fallback
+                checkTicketMultiBackend(cleanTicketCode)
                     .then(data => {
                         if (data.status === 'success') {
                             alertBox.innerHTML = `
