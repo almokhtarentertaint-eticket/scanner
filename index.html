@@ -50,32 +50,33 @@
             return scannedText;
         }
 
-        // Fungsi pengecekan beruntun (Multi-Backend Fallback)
+        // Pengecekan PARALEL (Serentak ke Backend 1 & 2) - Bebas Delay & Super Cepat
         async function checkTicketMultiBackend(ticketId) {
-            let lastResult = null;
+            const fetchPromises = BACKEND_URLS.map(async (baseUrl) => {
+                const url = baseUrl + "?action=checkin&code=" + encodeURIComponent(ticketId);
+                const response = await fetch(url);
+                const data = await response.json();
 
-            for (let i = 0; i < BACKEND_URLS.length; i++) {
-                const url = BACKEND_URLS[i] + "?action=checkin&code=" + encodeURIComponent(ticketId);
-                try {
-                    const response = await fetch(url);
-                    const data = await response.json();
-                    
-                    // Simpan hasil respon terakhir
-                    lastResult = data;
-
-                    // Jika tiket DITEMUKAN (berhasil check-in atau sudah dipakai), langsung return hasil
-                    if (data.status === "success" || data.status === "already_used" || data.status === "already_checked") {
-                        return data;
-                    }
-                    
-                    // Jika data.status === "invalid", loop lanjut ke backend berikutnya
-                } catch (err) {
-                    console.warn(`Gagal terhubung ke backend index ${i}:`, err);
+                // Jika tiket DITEMUKAN di backend ini, langsung kembalikan datanya
+                if (data.status === "success" || data.status === "already_used" || data.status === "already_checked") {
+                    return data;
                 }
-            }
+                
+                // Jika tidak ketemu (status: "invalid"), anggap error lokal agar backend lain dicoba
+                throw new Error("Tiket tidak ada di backend ini");
+            });
 
-            // Jika di semua backend tidak ditemukan / status invalid, kembalikan respon terakhir
-            return lastResult || { status: "error", message: "Gagal terhubung ke semua server backend." };
+            try {
+                // Promise.any akan mengambil respon SUKSES PERTAMA yang paling cepat masuk
+                const fastestSuccessResult = await Promise.any(fetchPromises);
+                return fastestSuccessResult;
+            } catch (aggregateError) {
+                // Jika KEDUA backend menolak (tiket memang tidak ditemukan di mana pun)
+                return { 
+                    status: "invalid", 
+                    message: "❌ TIKET TIDAK VALID / TIDAK DITEMUKAN" 
+                };
+            }
         }
 
         function onScanSuccess(decodedText, decodedResult) {
@@ -90,7 +91,7 @@
                     </div>
                 `;
 
-                // Kirim ID Tiket menggunakan logika Multi-Backend Fallback
+                // Kirim ID Tiket menggunakan logika Multi-Backend Paralel
                 checkTicketMultiBackend(cleanTicketCode)
                     .then(data => {
                         if (data.status === 'success') {
@@ -119,11 +120,11 @@
                             `;
                         }
                         
-                        // Nyalakan kembali scanner setelah 3 detik
+                        // Nyalakan kembali scanner setelah 2.5 detik
                         setTimeout(() => {
                             alertBox.innerHTML = "";
                             startScanner();
-                        }, 3000);
+                        }, 2500);
                     })
                     .catch(err => {
                         alertBox.innerHTML = `
@@ -134,7 +135,7 @@
                         setTimeout(() => {
                             alertBox.innerHTML = "";
                             startScanner();
-                        }, 3000);
+                        }, 2500);
                     });
             }).catch(err => {
                 console.error("Gagal menghentikan scanner", err);
