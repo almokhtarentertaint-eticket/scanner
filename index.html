@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scanner Panitia - Al Mokhtar Ensemble</title>
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS untuk styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Pustaka QR Scanner -->
     <script src="https://unpkg.com/html5-qrcode"></script>
@@ -17,7 +17,7 @@
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
 
     <div class="w-full max-w-md bg-[#16161e] border border-amber-500/30 rounded-xl p-6 shadow-2xl">
-        <div class="text-center border-b border-amber-500/30 pb-4 mb-6">
+        <div class="text-center border-b border-amber-500/30 pb-4 mb-4">
             <h1 class="text-amber-400 font-cinzel text-xl tracking-wider">GATE CHECK-IN</h1>
             <p class="text-slate-400 text-xs uppercase mt-1">Al Mokhtar Ensemble - 2 Okt 2026</p>
         </div>
@@ -26,19 +26,24 @@
         <div id="reader" class="w-full rounded-lg overflow-hidden border border-slate-700 bg-black"></div>
 
         <!-- Status / Notifikasi Hasil Scan -->
-        <div id="result-alert" class="mt-6"></div>
+        <div id="result-alert" class="mt-4 min-h-[90px]">
+            <div class="bg-slate-900 border border-slate-700 text-slate-400 p-4 rounded-lg text-center text-sm">
+                Arahkan kamera ke QR Code Tiket
+            </div>
+        </div>
     </div>
 
     <script>
         // DAFTAR URL BACKEND GOOGLE APPS SCRIPT
         const BACKEND_URLS = [
-            "https://script.google.com/macros/s/AKfycbyV2VwcJnAMXvpnW9tJQClegnEoUeLJptMVzwrBNHL_tDVByrFFvbPkr9G7HRht1t4/exec", // Backend 1 (Presale)
-            "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec"  // Backend 2 (OTS)
+            "https://script.google.com/macros/s/AKfycbyV2VwcJnAMXvpnW9tJQClegnEoUeLJptMVzwrBNHL_tDVByrFFvbPkr9G7HRht1t4/exec",
+            "https://script.google.com/macros/s/AKfycbyrpJkydxov6jjIKlE5JnrekEkulIape2arPmeFCkJEYTHF-ydOe78c5bXIeQ5jlgyW/exec"
         ];
 
         let html5QrCode;
+        let isProcessing = false; // Mencegah scan berulang tanpa mematikan stream kamera
 
-        // Fungsi Parser untuk mengambil Kode Tiket murni jika QR berisi URL
+        // Parser Kode Tiket dari URL
         function parseTicketCode(scannedText) {
             scannedText = scannedText.trim();
             if (scannedText.includes("code=")) {
@@ -50,103 +55,101 @@
             return scannedText;
         }
 
-        // Pengecekan PARALEL (Serentak ke Backend 1 & 2) - Bebas Delay & Super Cepat
-        async function checkTicketMultiBackend(ticketId) {
-            const fetchPromises = BACKEND_URLS.map(async (baseUrl) => {
-                const url = baseUrl + "?action=checkin&code=" + encodeURIComponent(ticketId);
-                const response = await fetch(url);
-                const data = await response.json();
+        // Fetch paralel dengan AbortController jika lambat
+        async function fetchWithFallback(ticketId, urlIndex = 0) {
+            if (urlIndex >= BACKEND_URLS.length) {
+                throw new Error("Semua backend gagal dihubungi.");
+            }
 
-                // Jika tiket DITEMUKAN di backend ini, langsung kembalikan datanya
-                if (data.status === "success" || data.status === "already_used" || data.status === "already_checked") {
-                    return data;
-                }
-                
-                // Jika tidak ketemu (status: "invalid"), anggap error lokal agar backend lain dicoba
-                throw new Error("Tiket tidak ada di backend ini");
-            });
-
+            const currentUrl = BACKEND_URLS[urlIndex] + "?action=checkin&code=" + encodeURIComponent(ticketId);
+            
             try {
-                // Promise.any akan mengambil respon SUKSES PERTAMA yang paling cepat masuk
-                const fastestSuccessResult = await Promise.any(fetchPromises);
-                return fastestSuccessResult;
-            } catch (aggregateError) {
-                // Jika KEDUA backend menolak (tiket memang tidak ditemukan di mana pun)
-                return { 
-                    status: "invalid", 
-                    message: "❌ TIKET TIDAK VALID / TIDAK DITEMUKAN" 
-                };
+                const response = await fetch(currentUrl);
+                const data = await response.json();
+                return data;
+            } catch (err) {
+                console.warn(`Gagal terhubung ke backend ${urlIndex}, mencoba berikutnya...`, err);
+                if (urlIndex + 1 < BACKEND_URLS.length) {
+                    return fetchWithFallback(ticketId, urlIndex + 1);
+                }
+                throw err;
             }
         }
 
-        function onScanSuccess(decodedText, decodedResult) {
-            const cleanTicketCode = parseTicketCode(decodedText);
+        async function onScanSuccess(decodedText) {
+            // Jika masih mengunci/memproses tiket sebelumnya, abaikan pembacaan frame ini
+            if (isProcessing) return;
+            isProcessing = true;
 
-            // Hentikan sementara scanner agar tidak scan berulang
-            html5QrCode.stop().then(() => {
-                const alertBox = document.getElementById('result-alert');
+            const cleanTicketCode = parseTicketCode(decodedText);
+            const alertBox = document.getElementById('result-alert');
+
+            // Feedback visual cepat saat QR terbaca
+            alertBox.innerHTML = `
+                <div class="bg-blue-950 border border-blue-500 text-blue-200 p-4 rounded-lg text-center font-semibold animate-pulse">
+                    ⏳ Memeriksa ID: <span class="text-white font-mono">${cleanTicketCode}</span>...
+                </div>
+            `;
+
+            try {
+                const data = await fetchWithFallback(cleanTicketCode);
+
+                if (data.status === 'success') {
+                    alertBox.innerHTML = `
+                        <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
+                            <p class="font-bold text-lg text-emerald-400">✅ MASUK / VALID</p>
+                            <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
+                            <p class="text-xs text-emerald-300 mt-1">Pemegang: <strong>${data.holder || '-'}</strong></p>
+                        </div>
+                    `;
+                } else if (data.status === 'already_used' || data.status === 'already_checked') {
+                    alertBox.innerHTML = `
+                        <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
+                            <p class="font-bold text-lg text-amber-400">⚠️ SUDAH DIPAKAI!</p>
+                            <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
+                            <p class="text-xs text-amber-300 mt-1">${data.message || 'Tiket ini sudah di-scan sebelumnya.'}</p>
+                        </div>
+                    `;
+                } else {
+                    alertBox.innerHTML = `
+                        <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
+                            <p class="font-bold text-lg text-rose-400">❌ TIKET PALSU / TIDAK VALID</p>
+                            <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
+                            <p class="text-xs text-rose-300 mt-1">${data.message || 'Tiket tidak ditemukan di sistem.'}</p>
+                        </div>
+                    `;
+                }
+            } catch (err) {
                 alertBox.innerHTML = `
-                    <div class="bg-blue-950 border border-blue-500 text-blue-200 p-4 rounded-lg text-center font-semibold">
-                        Memverifikasi ID: <span class="text-white">${cleanTicketCode}</span>...
+                    <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold text-xs">
+                        ⚠️ Gangguan Jaringan / Server Backend. Coba lagi.
                     </div>
                 `;
-
-                // Kirim ID Tiket menggunakan logika Multi-Backend Paralel
-                checkTicketMultiBackend(cleanTicketCode)
-                    .then(data => {
-                        if (data.status === 'success') {
-                            alertBox.innerHTML = `
-                                <div class="bg-emerald-950 border border-emerald-500 text-emerald-200 p-4 rounded-lg text-center">
-                                    <p class="font-bold text-lg text-emerald-400">✅ BERHASIL CHECK-IN!</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
-                                    <p class="text-xs text-emerald-300 mt-2">Pemegang: <strong>${data.holder || '-'}</strong></p>
-                                </div>
-                            `;
-                        } else if (data.status === 'already_used' || data.status === 'already_checked') {
-                            alertBox.innerHTML = `
-                                <div class="bg-amber-950 border border-amber-500 text-amber-200 p-4 rounded-lg text-center">
-                                    <p class="font-bold text-lg text-amber-400">⚠️ TIKET SUDAH DIGUNAKAN!</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
-                                    <p class="text-xs text-amber-300 mt-2">${data.message || 'Tiket ini sudah di-scan sebelumnya.'}</p>
-                                </div>
-                            `;
-                        } else {
-                            alertBox.innerHTML = `
-                                <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center">
-                                    <p class="font-bold text-lg text-rose-400">❌ TIKET TIDAK VALID</p>
-                                    <p class="text-sm mt-1 text-white font-mono">${cleanTicketCode}</p>
-                                    <p class="text-xs text-rose-300 mt-2">${data.message || 'Tiket tidak ditemukan di sistem.'}</p>
-                                </div>
-                            `;
-                        }
-                        
-                        // Nyalakan kembali scanner setelah 2.5 detik
-                        setTimeout(() => {
-                            alertBox.innerHTML = "";
-                            startScanner();
-                        }, 2500);
-                    })
-                    .catch(err => {
-                        alertBox.innerHTML = `
-                            <div class="bg-rose-950 border border-rose-500 text-rose-200 p-4 rounded-lg text-center font-semibold">
-                                ⚠️ Gagal terhubung ke server backend. Periksa koneksi internet.
-                            </div>
-                        `;
-                        setTimeout(() => {
-                            alertBox.innerHTML = "";
-                            startScanner();
-                        }, 2500);
-                    });
-            }).catch(err => {
-                console.error("Gagal menghentikan scanner", err);
-            });
+            } finally {
+                // Beri jeda 1.5 detik agar status bisa dibaca panitia, lalu langsung siap scan penonton berikutnya
+                setTimeout(() => {
+                    alertBox.innerHTML = `
+                        <div class="bg-slate-900 border border-slate-700 text-slate-400 p-4 rounded-lg text-center text-sm">
+                            Arahkan kamera ke QR Code Tiket berikutnya...
+                        </div>
+                    `;
+                    isProcessing = false; // Buka kunci scan
+                }, 1500);
+            }
         }
 
         function startScanner() {
             html5QrCode = new Html5Qrcode("reader");
-            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            // FPS dinaikkan ke 20 agar pembacaan sangat cepat & responsif
+            const config = { 
+                fps: 20, 
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+                    const qrboxSize = Math.floor(minEdge * 0.7);
+                    return { width: qrboxSize, height: qrboxSize };
+                }
+            };
             
-            // Buka kamera belakang
             html5QrCode.start(
                 { facingMode: "environment" }, 
                 config, 
